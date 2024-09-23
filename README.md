@@ -18,6 +18,8 @@ The script creates backups every hour, then every 24 hours a daily one is made (
 - When you have already created a service account, you can go to Google Drive where you will store backups (your personal or corporate), create a folder with the name you want and share access with the created service account.
 
 2) Script config:
+
+
 2.1 First of all you need venv and libraries:
 ```bash
   python -m venv venv
