@@ -1,0 +1,6 @@
+[
+    {
+        "db_name":"test_backup",
+        "collections":["test1"]
+    }
+]
