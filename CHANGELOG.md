@@ -19,4 +19,4 @@ This project uses [semantic versioning](https://semver.org/lang/ru/).
 
 ### Changed
 
--   Вirectory hierarchy
+-   Directory hierarchy
