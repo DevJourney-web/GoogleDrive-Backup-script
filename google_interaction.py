@@ -99,93 +99,118 @@ def find_tree(config_data: dict, tree={}) -> dict:
     """
     Find all id-keys and build an 'tree.json'
     """
-
+    allowed_dbs = {}
     service = start_core()
-    allowed_dbs = [conf["db_name"] for conf in config_data]
+    for conf in config_data:
+        
+        server = []
+        for db_conf in conf["db_conf"]:
+            server.append(db_conf["db_name"])
+            
+        allowed_dbs[conf["server_name"]] = server
+
 
     # ask google for content in root folder
     response = service.files().list(q=f"'{start_folder}' in parents").execute() 
 
-    for db_folder in response.get('files', []): 
+    for server_folder in response.get('files', []): 
+
         
-        if db_folder.get('name') not in allowed_dbs: 
+        if server_folder.get('name') not in allowed_dbs.keys():
             continue
 
         # get the folder id of certain db
-        tree[db_folder.get('name')] = {"id":db_folder.get('id')} 
+        tree[server_folder.get('name')] = {"id":server_folder.get('id')} 
         
         # ask google for content in db folder
-        response_backup = service.files().list(q=f"'{db_folder.get('id')}' in parents").execute() 
-        
-        for backup_folder in response_backup.get('files', []): 
+        response_dbs = service.files().list(q=f"'{server_folder.get('id')}' in parents").execute() 
+        for db_folder in response_dbs.get('files', []):
+            if db_folder.get('name') not in allowed_dbs[server_folder.get('name')]: 
+                    continue
+            tree[server_folder.get('name')][db_folder.get('name')] = {"id":server_folder.get('id')} 
+            response_backup = service.files().list(q=f"'{db_folder.get('id')}' in parents").execute() 
+            for backup_folder in response_backup.get('files', []): 
 
-            if backup_folder.get('name') != "backups": 
-                continue
-            
-            tree[db_folder.get('name')][backup_folder.get('name')] = {"id":backup_folder.get('id')} 
-            
-            # ask google for content in backup folder
-            response_time_segments = service.files().list(q=f"'{backup_folder.get('id')}' in parents").execute() 
-
-            for segments_folder in response_time_segments.get('files', []): 
-
-                if segments_folder.get('name') not in ["day", "week", "month"]: 
+                if backup_folder.get('name') != "backups": 
                     continue
                 
-                tree[db_folder.get('name')][backup_folder.get('name')][segments_folder.get('name')] = {"id":segments_folder.get('id')} 
-            
+                tree[server_folder.get('name')][db_folder.get('name')][backup_folder.get('name')] = {"id":backup_folder.get('id')} 
+                
+                # ask google for content in backup folder
+                response_time_segments = service.files().list(q=f"'{backup_folder.get('id')}' in parents").execute() 
+
+                for segments_folder in response_time_segments.get('files', []): 
+
+                    if segments_folder.get('name') not in ["day", "week", "month"]: 
+                        continue
+                    
+                    tree[server_folder.get('name')][db_folder.get('name')][backup_folder.get('name')][segments_folder.get('name')] = {"id":segments_folder.get('id')} 
+                
     return tree
 
         
 
 @log_actions
-def build_tree(config: dict, tree={}) -> None:
+def build_tree(config: dict, server_name: str, tree={}) -> None:
     """
     Build right structure in start folder
     """
+
     service = start_core()
     response = service.files().list(q=f"'{start_folder}' in parents").execute()
-    g_drive_folders = [name.get("name")  for name in response.get('files', [])]
-    
-    if config["db_name"] in g_drive_folders:
-        return 
+    g_drive_server_folders = {folder.get("name"):folder.get("id") for folder in response.get('files', [])}
+    if server_name in g_drive_server_folders.keys():
+        response = service.files().list(q=f"'{g_drive_server_folders[server_name]}' in parents").execute()
+        g_drive_folders = [name.get("name") for name in response.get('files', [])]
+        if config['db_name'] in g_drive_folders:
+            return
 
+    else:
+        folder_metadata = {
+        'name': server_name,
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': [start_folder]
+        }
+        folder = service.files().create(body=folder_metadata,fields='id').execute()
+        tree[server_name] = {"id":folder.get('id')}
+        
+    
     folder_metadata = {
     'name': config["db_name"],
     'mimeType': 'application/vnd.google-apps.folder',
-    'parents': [start_folder]
+    'parents': [tree[server_name]["id"]]
     }
     folder = service.files().create(body=folder_metadata,fields='id').execute()
-    tree[config["db_name"]] = {"id":folder.get('id')}
+    tree[server_name][config["db_name"]] = {"id":folder.get('id')}
 
     folder_metadata = {
     'name': "backups",
     'mimeType': 'application/vnd.google-apps.folder',
-    'parents':[tree[config["db_name"]]["id"]]
+    'parents':[tree[server_name][config["db_name"]]["id"]]
     }
     folder = service.files().create(body=folder_metadata,fields='id').execute()
-    tree[config["db_name"]]["backups"] = {"id":folder.get('id')}
+    tree[server_name][config["db_name"]]["backups"] = {"id":folder.get('id')}
 
     folder_metadata = {
     'name': "day",
     'mimeType': 'application/vnd.google-apps.folder',
-    'parents':[tree[config["db_name"]]["backups"]["id"]]
+    'parents':[tree[server_name][config["db_name"]]["backups"]["id"]]
     }
     folder = service.files().create(body=folder_metadata,fields='id').execute()
-    tree[config["db_name"]]["backups"]["day"] = {"id":folder.get('id')}
+    tree[server_name][config["db_name"]]["backups"]["day"] = {"id":folder.get('id')}
 
     folder_metadata = {
     'name': "week",
     'mimeType': 'application/vnd.google-apps.folder',
-    'parents':[tree[config["db_name"]]["backups"]["id"]]
+    'parents':[tree[server_name][config["db_name"]]["backups"]["id"]]
     }
     folder = service.files().create(body=folder_metadata,fields='id').execute()
-    tree[config["db_name"]]["backups"]["week"] = {"id":folder.get('id')}
+    tree[server_name][config["db_name"]]["backups"]["week"] = {"id":folder.get('id')}
 
     folder_metadata = {
     'name': "month",
     'mimeType': 'application/vnd.google-apps.folder',
-    'parents':[tree[config["db_name"]]["backups"]["id"]]
+    'parents':[tree[server_name][config["db_name"]]["backups"]["id"]]
     }
     folder = service.files().create(body=folder_metadata,fields='id').execute()
-    tree[config["db_name"]]["backups"]["month"] = {"id":folder.get('id')}
+    tree[server_name][config["db_name"]]["backups"]["month"] = {"id":folder.get('id')}

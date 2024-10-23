@@ -30,7 +30,7 @@ logger1.addHandler(handler1)
 
 hierarchy = ["day", "week", "month"]
 
-client = MongoClient(os.getenv("DB_URL"))
+
 
 import functools
 def catch_exceptions(cancel_on_failure=False):
@@ -57,6 +57,7 @@ def log_actions(func):
     def wrapper(*args, **kwargs):
         try:
             result = func(*args, **kwargs)
+            
             logger1.info(f"Func '{func.__name__}' done.")
             return result
         except Exception as e:
@@ -87,7 +88,7 @@ def delete_weeks_backups(db_config: dict) -> None:
 
 
 @catch_exceptions(cancel_on_failure=True)
-def backup_data(db_config: dict, folder: str) -> None:
+def backup_data(db_config: dict, server_name: str, db_client: MongoClient,  folder: str) -> None:
     """
     Save right backup in BACKUPS_PATH and send them to drive
     """
@@ -100,7 +101,7 @@ def backup_data(db_config: dict, folder: str) -> None:
         else:
             return
     
-    db = client.get_database(db_config["db_name"])
+    db = db_client.get_database(db_config["db_name"])
 
     for collection_name in db_config["collections"]:
         if collection_name not in db.list_collection_names():
@@ -112,10 +113,11 @@ def backup_data(db_config: dict, folder: str) -> None:
         if data == []:
             continue
         file_name = "backup_"+collection_name+"_"+datetime.datetime.now().strftime("%d-%m-%Y-%H")+".json"
-        file_path = os.path.join(BACKUPS_FOLDER, db_config["db_name"], "backups", folder, file_name)
+        file_path = os.path.join(BACKUPS_FOLDER, server_name, db_config["db_name"], "backups", folder, file_name)
         with open(file_path, 'w') as json_file: 
             json.dump(data, json_file, indent=2, default=json_util.default)
-        add_data_to_google_drive(tree[db_config["db_name"]]["backups"][folder]["id"],file_path)
+        add_data_to_google_drive(tree[server_name][db_config["db_name"]]["backups"][folder]["id"], file_path)
+        data.clear()
 
 
 @log_actions
@@ -124,55 +126,59 @@ def main():
     tree = {}
     schedule_list = {}
 
-    database_names = client.list_database_names()
+    global db_client
     with open(os.path.join(PROJECT_PATH,'config.json'), 'r') as file:
-
-        data_file = json.load(file)
-        for db_config in data_file:
-            if db_config["db_name"] not in database_names:
-                raise Exception(f"Database '{db_config['db_name']}' not found!")
-            
-            schedule_list[db_config["db_name"]] = schedule.Scheduler()
-            schedule_list[db_config["db_name"]].every().hour.at(":00").do(backup_data, db_config, "day")
-            schedule_list[db_config["db_name"]].every().day.at("00:00").do(backup_data, db_config, "week")
-            schedule_list[db_config["db_name"]].every().day.at("00:00").do(backup_data, db_config, "month")
-
-            if not os.path.exists(os.path.join(BACKUPS_FOLDER,db_config["db_name"])):
-                
-                db = client.get_database(db_config["db_name"])
-
-                for collection_name in db_config["collections"]:
-                    if collection_name not in db.list_collection_names():
-                        raise Exception(f"In database '{db_config['db_name']}' not found collection '{collection_name}'")
-                os.makedirs(os.path.join(BACKUPS_FOLDER,db_config["db_name"]))
-                
-                for directory_name in hierarchy:
-                    if not os.path.exists(os.path.join(BACKUPS_FOLDER, db_config["db_name"], "backups", directory_name)):
-                        os.makedirs(os.path.join(BACKUPS_FOLDER, db_config["db_name"], "backups", directory_name))
-                build_tree(db_config, tree)
+         
         
-        tree = find_tree(data_file)
+        data_file = json.load(file)
+        
+        for db_server in data_file:
+            
+            db_client = MongoClient(db_server["db_conn_string"])  
+            server_name = db_server["server_name"]
+            if not os.path.exists(os.path.join(BACKUPS_FOLDER, server_name)):
+                os.makedirs(os.path.join(BACKUPS_FOLDER, server_name))
+            for db_config in db_server["db_conf"]:
+                database_names = db_client.list_database_names()
+                if db_config["db_name"] not in database_names:
+                    raise Exception(f"Database '{db_config['db_name']}' not found!")
+                
+                schedule_list[server_name] = schedule_list.get(server_name, {})
+                schedule_list[server_name][db_config["db_name"]] = schedule.Scheduler()
+                schedule_list[server_name][db_config["db_name"]].every().hour.at(":00").do(backup_data, db_config, server_name, db_client, "day")
+                schedule_list[server_name][db_config["db_name"]].every().day.at("00:00").do(backup_data, db_config, server_name, db_client, "week")
+                schedule_list[server_name][db_config["db_name"]].every().day.at("00:00").do(backup_data, db_config, server_name, db_client,  "month")
+                
+                if not os.path.exists(os.path.join(BACKUPS_FOLDER, server_name, db_config["db_name"])):
+                    
+                    db_server = db_client.get_database(db_config["db_name"])
+
+                    for collection_name in db_config["collections"]:
+                        if collection_name not in db_server.list_collection_names():
+                            raise Exception(f"In database '{db_config['db_name']}' not found collection '{collection_name}'")
+                    if not os.path.exists(os.path.join(BACKUPS_FOLDER,server_name,db_config["db_name"])):
+                        os.makedirs(os.path.join(BACKUPS_FOLDER,server_name,db_config["db_name"]))
+                    
+                    for directory_name in hierarchy:
+                        if not os.path.exists(os.path.join(BACKUPS_FOLDER, server_name, db_config["db_name"], "backups", directory_name)):
+                            os.makedirs(os.path.join(BACKUPS_FOLDER, server_name, db_config["db_name"], "backups", directory_name))
+                    build_tree(db_config, server_name, tree)
+        
+        tree = find_tree(data_file, tree)
 
         
     with open(os.path.join(PROJECT_PATH,"tree.json"), 'w') as json_file: 
             json.dump(tree, json_file, indent=2, default=json_util.default)
 
-    
-    print("Script started!")
 
+    print("Script started!")
     while True:
-        for task in schedule_list.values():
-            task.run_pending()
+
+        for servers in schedule_list.values():
+            for task in servers.values():
+                task.run_pending()
         time.sleep(1)
 
 
 if __name__ == "__main__":
     main()
-    
-
-    
-        
-
-                
-                
-        

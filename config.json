@@ -1,6 +1,20 @@
 [
     {
-        "db_name":"test_backup",
-        "collections":["test1"]
+        "db_conn_string": "your_db_connection_string",
+        "db_conf": [
+            {
+                "db_name": "test_backup1",
+                "collections": ["test1", "test2"]
+            }
+        ]
+    },
+    {
+        "db_conn_string": "your_db_connection_string",
+        "db_conf": [
+            {
+                "db_name": "test_backup2",
+                "collections": ["test3", "test4"]
+            }
+        ]
     }
 ]
